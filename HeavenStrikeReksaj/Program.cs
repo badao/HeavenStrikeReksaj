@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -17,11 +17,12 @@ namespace HeavenStrikeReksaj
 
         private static Orbwalking.Orbwalker _orbwalker;
 
-        private static Spell _q, _q2, _w, _e, _r;
+        private static Spell _q, _q2, _w, _e, _e2, _r;
 
         private static Menu _menu;
 
-        private static string  drawe1 = "Draw E1", drawe2 = "Draw E2" , drawq2 = "Draw Q2", autoq2 = "Auto Q2";
+        private static string  drawe1 = "Draw E1", drawe2 = "Draw E2" , drawq2 = "Draw Q2", autoq2 = "Auto Q2",
+            comboE2 = "E2 combo (tunnel)", comboW1 = "W1 combo (burrow)";
 
         private static bool burrowed = false;
         static void Main(string[] args)
@@ -37,10 +38,11 @@ namespace HeavenStrikeReksaj
 
             //Spells
             _q = new Spell(SpellSlot.Q);
-            _q2 = new Spell(SpellSlot.Q, 1650);
+            _q2 = new Spell(SpellSlot.Q, 1550);
             _q2.MinHitChance = HitChance.Medium;
             _w = new Spell(SpellSlot.W);
             _e = new Spell(SpellSlot.E, 250);
+            _e2 = new Spell(SpellSlot.E, 500);
             _r = new Spell(SpellSlot.R);
             _q2.SetSkillshot(0.5f, 60, 1950, true, SkillshotType.SkillshotLine);
             //Menu instance
@@ -54,6 +56,8 @@ namespace HeavenStrikeReksaj
             TargetSelector.AddToMenu(ts);
             //spell menu
             Menu spellMenu = _menu.AddSubMenu(new Menu("Spells", "Spells"));
+            spellMenu.AddItem(new MenuItem(comboW1, comboW1).SetValue(true));
+            spellMenu.AddItem(new MenuItem(comboE2, comboE2).SetValue(false));
             //auto menu
             Menu auto = spellMenu.AddSubMenu(new Menu("Auto", "Auto"));
             auto.AddItem(new MenuItem(autoq2, autoq2).SetValue(false));
@@ -176,6 +180,37 @@ namespace HeavenStrikeReksaj
                         _q2.Cast(target);
                 }
             }
+            // W1 cast
+            if (!burrowed && _w.IsReady() && _menu.Item(comboW1).GetValue<bool>() && Orbwalking.CanMove(80))
+            {
+                var target = _orbwalker.GetTarget();
+                if (target.IsValidTarget() && !target.IsZombie)
+                {
+                    if (!(target as Obj_AI_Base).HasBuff("reksaiknockupimmune"))
+                        _w.Cast();
+                }
+                else
+                {
+                    var hero = TargetSelector.GetTarget(300, TargetSelector.DamageType.Physical);
+                    if (hero.IsValidTarget() && !hero.IsZombie && !hero.HasBuff("reksaiknockupimmune"))
+                        _w.Cast();
+                }
+            }
+            //E2 cast
+            if (burrowed && _e.IsReady() && _menu.Item(comboE2).GetValue<bool>())
+            {
+                if (Player.CountEnemiesInRange(300) == 0)
+                {
+                    var target = TargetSelector.GetTarget(600, TargetSelector.DamageType.Physical);
+                    if (target.IsValidTarget() && !target.IsZombie && Prediction.GetPrediction(target,10).UnitPosition
+                        .Distance(Player.Position) > target.Distance(Player.Position))
+                    {
+                        var x = Prediction.GetPrediction(target, 500).UnitPosition;
+                        var y = Player.Position.Extend(x, _e2.Range);
+                        _e2.Cast(x);
+                    }
+                }
+            }
         }
         private static void Clear()
         {
@@ -221,5 +256,7 @@ namespace HeavenStrikeReksaj
             if (ItemData.Ravenous_Hydra_Melee_Only.GetItem().IsReady())
                 ItemData.Ravenous_Hydra_Melee_Only.GetItem().Cast();
         }
+
+
     }
 }
