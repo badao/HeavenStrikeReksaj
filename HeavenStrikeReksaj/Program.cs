@@ -38,7 +38,7 @@ namespace HeavenStrikeReksaj
 
             //Spells
             _q = new Spell(SpellSlot.Q);
-            _q2 = new Spell(SpellSlot.Q, 1550);
+            _q2 = new Spell(SpellSlot.Q, 1450);
             _q2.MinHitChance = HitChance.Medium;
             _w = new Spell(SpellSlot.W);
             _e = new Spell(SpellSlot.E, 250);
