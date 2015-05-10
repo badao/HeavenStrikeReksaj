@@ -22,7 +22,7 @@ namespace HeavenStrikeReksaj
         private static Menu _menu;
 
         private static string  drawe1 = "Draw E1", drawe2 = "Draw E2" , drawq2 = "Draw Q2", autoq2 = "Auto Q2",
-            comboE2 = "E2 combo (tunnel)", comboW1 = "W1 combo (burrow)";
+            comboE2 = "E2 combo (tunnel)", comboW1 = "W1 combo (burrow)", comboE1 = "E1 Combo when fury >=";
 
         private static bool burrowed = false;
         static void Main(string[] args)
@@ -58,6 +58,7 @@ namespace HeavenStrikeReksaj
             Menu spellMenu = _menu.AddSubMenu(new Menu("Spells", "Spells"));
             spellMenu.AddItem(new MenuItem(comboW1, comboW1).SetValue(true));
             spellMenu.AddItem(new MenuItem(comboE2, comboE2).SetValue(false));
+            spellMenu.AddItem(new MenuItem(comboE1, comboE1).SetValue(new Slider(0, 0, 100)));
             //auto menu
             Menu auto = spellMenu.AddSubMenu(new Menu("Auto", "Auto"));
             auto.AddItem(new MenuItem(autoq2, autoq2).SetValue(false));
@@ -166,7 +167,7 @@ namespace HeavenStrikeReksaj
                     _w.Cast();
             }
             // e cast
-            if (!burrowed && _e.IsReady() && Player.Mana == 100)
+            if (!burrowed && _e.IsReady() && Player.Mana >= _menu.Item(comboE1).GetValue<Slider>().Value)
             {
                 var target = TargetSelector.GetTarget(_e.Range, TargetSelector.DamageType.Physical);
                 if (target.IsValidTarget() && !target.IsZombie)
