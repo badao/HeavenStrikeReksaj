@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using LeagueSharp;
 using LeagueSharp.Common;
 using LeagueSharp.Common.Data;
+using ItemData = LeagueSharp.Common.Data.ItemData;
 using SharpDX;
 using Color = System.Drawing.Color;
 
