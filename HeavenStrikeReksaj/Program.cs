@@ -83,6 +83,10 @@ namespace HeavenStrikeReksaj
             if (!sender.IsMe) return;
             if (args.SData.Name.ToLower().Contains("reksaiq"))
                 Orbwalking.ResetAutoAttackTimer();
+            if (args.SData.Name == "ItemTitanicHydraCleave")
+            {
+                Orbwalking.ResetAutoAttackTimer();
+            }
         }
 
         private static void Orbwalking_AfterAttack(AttackableUnit unit, AttackableUnit target)
@@ -218,7 +222,7 @@ namespace HeavenStrikeReksaj
         {
             var minionE = MinionManager.GetMinions(_e.Range,MinionTypes.All,MinionTeam.NotAlly).FirstOrDefault();
             var minionQ2 = MinionManager.GetMinions(_q2.Range,MinionTypes.All,MinionTeam.NotAlly);
-            var minionW = MinionManager.GetMinions(Player.BoundingRadius + 50,MinionTypes.All,MinionTeam.NotAlly).FirstOrDefault();
+            var minionW = MinionManager.GetMinions(Player.BoundingRadius + 200, MinionTypes.All,MinionTeam.NotAlly).FirstOrDefault();
             if (minionE != null && !burrowed && _e.IsReady())
             {
                 if (Player.CalcDamage(minionE, Player.Mana == 100 ? Damage.DamageType.True : Damage.DamageType.Physical, GetRawEDamage())
@@ -241,7 +245,8 @@ namespace HeavenStrikeReksaj
         }
         public static bool HasItem()
         {
-            if (ItemData.Tiamat_Melee_Only.GetItem().IsReady() || ItemData.Ravenous_Hydra_Melee_Only.GetItem().IsReady())
+            if (ItemData.Tiamat_Melee_Only.GetItem().IsReady() || ItemData.Ravenous_Hydra_Melee_Only.GetItem().IsReady()
+                || Items.CanUseItem(3748))
             {
                 return true;
             }
@@ -257,6 +262,9 @@ namespace HeavenStrikeReksaj
                 ItemData.Tiamat_Melee_Only.GetItem().Cast();
             if (ItemData.Ravenous_Hydra_Melee_Only.GetItem().IsReady())
                 ItemData.Ravenous_Hydra_Melee_Only.GetItem().Cast();
+            // titanic hydra
+            if (Items.CanUseItem(3748))
+                Items.UseItem(3748);
         }
 
 

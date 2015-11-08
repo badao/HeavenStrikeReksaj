@@ -30,9 +30,20 @@ namespace HeavenStrikeReksaj
             Mixed,
             LaneClear,
             Combo,
+            OrbwalkPassive,
             None
         }
-
+        // Buffs that disable attack and movement
+        public static readonly BuffType[] DisableBuff =
+        {
+            BuffType.Charm,
+            BuffType.Fear,
+            BuffType.Stun,
+            BuffType.Knockup,
+            BuffType.Knockup,
+            BuffType.Taunt,
+            BuffType.Suppression
+        };
         //Spells that reset the attack timer.
         private static readonly string[] AttackResets =
         {
@@ -49,7 +60,7 @@ namespace HeavenStrikeReksaj
         {
             "jarvanivcataclysmattack", "monkeykingdoubleattack",
             "shyvanadoubleattack", "shyvanadoubleattackdragon", "zyragraspingplantattack", "zyragraspingplantattack2",
-            "zyragraspingplantattackfire", "zyragraspingplantattack2fire", "viktorpowertransfer"
+            "zyragraspingplantattackfire", "zyragraspingplantattack2fire", "viktorpowertransfer", "sivirwattackbounce"
         };
 
         //Spells that are attacks even if they dont have the "attack" word in their name.
@@ -64,14 +75,17 @@ namespace HeavenStrikeReksaj
         // Champs whose auto attacks can't be cancelled
         private static readonly string[] NoCancelChamps = { "Kalista" };
         public static int LastAATick;
+        public static int LastAACommandTick;
         public static bool Attack = true;
         public static bool DisableNextAttack;
         public static bool Move = true;
+        public static bool StopMove = false;
+        public static int winduptime;
         public static int LastMoveCommandT;
         public static Vector3 LastMoveCommandPosition = Vector3.Zero;
         private static AttackableUnit _lastTarget;
         private static readonly Obj_AI_Hero Player;
-        private static int _delay;
+        //private static int _delay;
         private static float _minDistance = 400;
         private static bool _missileLaunched;
         private static readonly Random _random = new Random(DateTime.Now.Millisecond);
@@ -82,6 +96,7 @@ namespace HeavenStrikeReksaj
             Obj_AI_Base.OnProcessSpellCast += OnProcessSpell;
             MissileClient.OnCreate += MissileClient_OnCreate;
             Spellbook.OnStopCast += SpellbookOnStopCast;
+            Obj_AI_Base.OnDoCast += Obj_AI_Base_OnDoCast;
         }
 
         /// <summary>
@@ -98,6 +113,9 @@ namespace HeavenStrikeReksaj
         ///     This event is fired after a unit finishes auto-attacking another unit (Only works with player for now).
         /// </summary>
         public static event AfterAttackEvenH AfterAttack;
+
+
+        public static event AfterAttackEvenH AfterAttackNoTarget;
 
         /// <summary>
         ///     Gets called on target changes
@@ -131,9 +149,15 @@ namespace HeavenStrikeReksaj
 
         private static void FireAfterAttack(AttackableUnit unit, AttackableUnit target)
         {
-            if (AfterAttack != null && target.IsValidTarget())
+            if (AfterAttack != null)
             {
-                AfterAttack(unit, target);
+                if (target.IsValidTarget())
+                    AfterAttack(unit, target);
+            }
+            if (AfterAttackNoTarget != null)
+            {
+                if (!target.IsValidTarget())
+                    AfterAttackNoTarget(unit, null);
             }
         }
 
@@ -220,12 +244,9 @@ namespace HeavenStrikeReksaj
         /// </summary>
         public static bool CanAttack()
         {
-            if (LastAATick <= Utils.TickCount)
-            {
-                return Utils.TickCount + Game.Ping / 2 + 25 >= LastAATick + Player.AttackDelay * 1000 && Attack;
-            }
-
-            return false;
+            return Utils.GameTimeTickCount + Game.Ping / 2 + 25 >= LastAATick + Player.AttackDelay * 1000 && Attack
+                //&& !DisableBuff.Where(x => Player.HasBuffOfType(x)).Any() && !Player.IsDashing()
+                && (Utils.GameTimeTickCount >= LastAACommandTick + Player.AttackCastDelay * 1000 + 150 + Game.Ping);
         }
 
         /// <summary>
@@ -234,28 +255,27 @@ namespace HeavenStrikeReksaj
         public static bool CanMove(float extraWindup)
         {
             if (!Move)
+            {
                 return false;
+            }
 
-            if (_missileLaunched)
+            if (_missileLaunched && Orbwalker.MissileCheck)
             {
                 return true;
             }
-
-
-            if (LastAATick <= Utils.TickCount)
+            if (StopMove == false)
             {
-                return NoCancelChamps.Contains(Player.ChampionName)
-                    ? (Utils.TickCount - LastAATick > 250)
-                    : (Utils.TickCount + Game.Ping / 2 >= LastAATick + Player.AttackCastDelay * 1000 + extraWindup);
+                return true;
             }
-
-            return false;
+            return NoCancelChamps.Contains(Player.ChampionName) ||
+                ((Utils.GameTimeTickCount + Game.Ping / 2 >= LastAATick + Player.AttackCastDelay * 1000 + extraWindup)
+                && (Utils.GameTimeTickCount >= LastAACommandTick + Player.AttackCastDelay * 1000 + 100 + extraWindup + Game.Ping));
         }
 
-        public static void SetMovementDelay(int delay)
-        {
-            _delay = delay;
-        }
+        //public static void SetMovementDelay(int delay)
+        //{
+        //    _delay = delay;
+        //}
 
         public static void SetMinimumOrbwalkDistance(float d)
         {
@@ -278,48 +298,58 @@ namespace HeavenStrikeReksaj
             bool useFixedDistance = true,
             bool randomizeMinDistance = true)
         {
-            if (Utils.TickCount - LastMoveCommandT < _delay && !overrideTimer)
-            {
-                return;
-            }
+            var playerPosition = Player.ServerPosition;
 
-            LastMoveCommandT = Utils.TickCount;
-
-            if (Player.ServerPosition.Distance(position, true) < holdAreaRadius * holdAreaRadius)
+            if (playerPosition.Distance(position, true) < holdAreaRadius * holdAreaRadius)
             {
-                if (Player.Path.Count() > 1)
+                if (Player.Path.Length > 0)
                 {
-                    Player.IssueOrder((GameObjectOrder)10, Player.ServerPosition);
-                    Player.IssueOrder(GameObjectOrder.HoldPosition, Player.ServerPosition);
-                    LastMoveCommandPosition = Player.ServerPosition;
+                    Player.IssueOrder(GameObjectOrder.Stop, playerPosition);
+                    LastMoveCommandPosition = playerPosition;
+                    LastMoveCommandT = Utils.GameTimeTickCount - 70;
                 }
                 return;
             }
 
             var point = position;
-            if (useFixedDistance)
+
+            if (Player.Distance(point, true) < 150 * 150)
             {
-                point = Player.ServerPosition +
-                        (randomizeMinDistance ? (_random.NextFloat(0.6f, 1) + 0.2f) * _minDistance : _minDistance) *
-                        (position.To2D() - Player.ServerPosition.To2D()).Normalized().To3D();
+                point = playerPosition.Extend(position, (randomizeMinDistance ? (_random.NextFloat(0.6f, 1) + 0.2f) * _minDistance : _minDistance));
             }
-            else
+            var angle = 0f;
+            var currentPath = Player.GetWaypoints();
+            if (currentPath.Count > 1 && currentPath.PathLength() > 100)
             {
-                if (randomizeMinDistance)
+                var movePath = Player.GetPath(point);
+
+                if (movePath.Length > 1)
                 {
-                    point = Player.ServerPosition +
-                            (_random.NextFloat(0.6f, 1) + 0.2f) * _minDistance *
-                            (position.To2D() - Player.ServerPosition.To2D()).Normalized().To3D();
+                    var v1 = currentPath[1] - currentPath[0];
+                    var v2 = movePath[1] - movePath[0];
+                    angle = v1.AngleBetween(v2.To2D());
+                    var distance = movePath.Last().To2D().Distance(currentPath.Last(), true);
+
+                    if ((angle < 10 && distance < 500 * 500) || distance < 50 * 50)
+                    {
+                        return;
+                    }
                 }
-                else if (Player.ServerPosition.Distance(position) > _minDistance)
-                {
-                    point = Player.ServerPosition +
-                            _minDistance * (position.To2D() - Player.ServerPosition.To2D()).Normalized().To3D();
-                }
+            }
+
+            if (Utils.GameTimeTickCount - LastMoveCommandT < (70 + Math.Min(60, Game.Ping)) && !overrideTimer && angle < 60)
+            {
+                return;
+            }
+
+            if (angle >= 60 && Utils.GameTimeTickCount - LastMoveCommandT < 60)
+            {
+                return;
             }
 
             Player.IssueOrder(GameObjectOrder.MoveTo, point);
             LastMoveCommandPosition = point;
+            LastMoveCommandT = Utils.GameTimeTickCount;
         }
 
         /// <summary>
@@ -341,6 +371,13 @@ namespace HeavenStrikeReksaj
 
                     if (!DisableNextAttack)
                     {
+                        if (!NoCancelChamps.Contains(Player.ChampionName))
+                        {
+                            LastAACommandTick = Utils.GameTimeTickCount - 4;
+                            //LastAATick = Utils.GameTimeTickCount + Game.Ping + 100 - (int)(ObjectManager.Player.AttackCastDelay * 1000f);
+                            _missileLaunched = false;
+                            StopMove = true;
+                        }
                         Player.IssueOrder(GameObjectOrder.AttackUnit, target);
                         _lastTarget = target;
                         return;
@@ -351,6 +388,7 @@ namespace HeavenStrikeReksaj
                 {
                     MoveTo(position, holdAreaRadius, false, useFixedDistance, randomizeMinDistance);
                 }
+                winduptime = (int)extraWindup;
             }
             catch (Exception e)
             {
@@ -364,6 +402,7 @@ namespace HeavenStrikeReksaj
         public static void ResetAutoAttackTimer()
         {
             LastAATick = 0;
+            LastAACommandTick = 0;
         }
 
         private static void SpellbookOnStopCast(Spellbook spellbook, SpellbookStopCastEventArgs args)
@@ -376,22 +415,26 @@ namespace HeavenStrikeReksaj
 
         private static void MissileClient_OnCreate(GameObject sender, EventArgs args)
         {
+            if (!Orbwalker.Enabled)
+                return;
             var missile = sender as MissileClient;
             if (missile != null && missile.SpellCaster.IsMe && IsAutoAttack(missile.SData.Name))
             {
-                _missileLaunched = true;
+                // _missileLaunched = true;
             }
         }
 
         private static void OnProcessSpell(Obj_AI_Base unit, GameObjectProcessSpellCastEventArgs Spell)
         {
+            if (!Orbwalker.Enabled)
+                return;
             try
             {
                 var spellName = Spell.SData.Name;
 
                 if (IsAutoAttackReset(spellName) && unit.IsMe)
                 {
-                    Utility.DelayAction.Add(250, ResetAutoAttackTimer);
+                    ResetAutoAttackTimer();
                 }
 
                 if (!IsAutoAttack(spellName))
@@ -402,9 +445,9 @@ namespace HeavenStrikeReksaj
                 if (unit.IsMe &&
                     (Spell.Target is Obj_AI_Base || Spell.Target is Obj_BarracksDampener || Spell.Target is Obj_HQ))
                 {
-                    LastAATick = Utils.TickCount - Game.Ping / 2;
+                    LastAATick = Utils.GameTimeTickCount - Game.Ping / 2;
                     _missileLaunched = false;
-
+                    StopMove = true;
                     if (Spell.Target is Obj_AI_Base)
                     {
                         var target = (Obj_AI_Base)Spell.Target;
@@ -415,8 +458,8 @@ namespace HeavenStrikeReksaj
                         }
 
                         //Trigger it for ranged until the missiles catch normal attacks again!
-                        Utility.DelayAction.Add(
-                            (int)(unit.AttackCastDelay * 1000 + 40), () => FireAfterAttack(unit, _lastTarget));
+                        //Utility.DelayAction.Add(
+                        //    (int)(unit.AttackCastDelay * 1000 + 40), () => FireAfterAttack(unit, _lastTarget));
                     }
                 }
 
@@ -427,7 +470,35 @@ namespace HeavenStrikeReksaj
                 Console.WriteLine(e);
             }
         }
+        private static void Obj_AI_Base_OnDoCast(Obj_AI_Base sender, GameObjectProcessSpellCastEventArgs args)
+        {
+            if (!Orbwalker.Enabled)
+                return;
+            try
+            {
+                var spellName = args.SData.Name;
 
+                if (!IsAutoAttack(spellName))
+                {
+                    return;
+                }
+                if (sender.IsMe &&
+                    (args.Target is Obj_AI_Base || args.Target is Obj_BarracksDampener || args.Target is Obj_HQ))
+                {
+                    _missileLaunched = true;
+                    Utility.DelayAction.Add(37 > Game.Ping ? 50 - Game.Ping : 0, () => StopMove = false);
+                    if (args.Target is Obj_AI_Base)
+                    {
+                        //Trigger it for ranged until the missiles catch normal attacks again!
+                        Utility.DelayAction.Add(37 > Game.Ping ? 50 - Game.Ping : 0, () => FireAfterAttack(sender, _lastTarget));
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        }
         public class BeforeAttackEventArgs
         {
             private bool _process = true;
@@ -451,45 +522,70 @@ namespace HeavenStrikeReksaj
         /// </summary>
         public class Orbwalker
         {
+            private static bool enabled;
+
+            public static bool Enabled
+            {
+                get
+                {
+                    return enabled;
+                }
+
+                set
+                {
+                    enabled = value;
+                    if (_config != null)
+                    {
+                        _config.Item("enableOption").SetValue(value);
+                    }
+                }
+            }
             private const float LaneClearWaitTimeMod = 2f;
-            private static Menu _config;
+            public static Menu _config;
             private readonly Obj_AI_Hero Player;
             private Obj_AI_Base _forcedTarget;
             private OrbwalkingMode _mode = OrbwalkingMode.None;
-            private Vector3 _orbwalkingPoint;
+            public Vector3 _orbwalkingPoint;
             private Obj_AI_Minion _prevMinion;
+            public static List<Orbwalker> Instances = new List<Orbwalker>();
 
             public Orbwalker(Menu attachToMenu)
             {
                 _config = attachToMenu;
+                _config.AddItem(new MenuItem("enableOption", "Enable Orbwalker").SetValue(true))
+                    .ValueChanged += (sender, args) => enabled = args.GetNewValue<bool>();
+                enabled = _config.Item("enableOption").GetValue<bool>();
                 /* Drawings submenu */
                 var drawings = new Menu("Drawings", "drawings");
                 drawings.AddItem(
                     new MenuItem("AACircle", "AACircle").SetShared()
-                        .SetValue(new Circle(true, Color.FromArgb(255, 255, 0, 255))));
+                        .SetValue(new Circle(true, Color.FromArgb(120, 255, 0, 0))));
                 drawings.AddItem(
                     new MenuItem("AACircle2", "Enemy AA circle").SetShared()
                         .SetValue(new Circle(false, Color.FromArgb(255, 255, 0, 255))));
                 drawings.AddItem(
                     new MenuItem("HoldZone", "HoldZone").SetShared()
-                        .SetValue(new Circle(false, Color.FromArgb(255, 255, 0, 255))));
+                        .SetValue(new Circle(false, Color.FromArgb(3, 187, 246))));
                 _config.AddSubMenu(drawings);
 
                 /* Misc options */
                 var misc = new Menu("Misc", "Misc");
                 misc.AddItem(
-                    new MenuItem("HoldPosRadius", "Hold Position Radius").SetShared().SetValue(new Slider(0, 0, 250)));
+                    new MenuItem("HoldPosRadius", "Hold Position Radius").SetShared().SetValue(new Slider(50, 35, 250)));
                 misc.AddItem(new MenuItem("PriorizeFarm", "Priorize farm over harass").SetShared().SetValue(true));
+
                 _config.AddSubMenu(misc);
 
+                /* Missile check */
+                _config.AddItem(new MenuItem("MissileCheck", "Use Missile Check").SetShared().SetValue(true));
 
                 /* Delay sliders */
                 _config.AddItem(
                     new MenuItem("ExtraWindup", "Extra windup time").SetShared().SetValue(new Slider(80, 0, 200)));
                 _config.AddItem(new MenuItem("FarmDelay", "Farm delay").SetShared().SetValue(new Slider(0, 0, 200)));
-                _config.AddItem(
-                    new MenuItem("MovementDelay", "Movement delay").SetShared().SetValue(new Slider(80, 0, 250)))
-                    .ValueChanged += (sender, args) => SetMovementDelay(args.GetNewValue<Slider>().Value);
+                //_config.AddItem(
+                //    new MenuItem("MovementDelay", "Movement delay").SetShared().SetValue(new Slider(30, 0, 250)))
+                //    .ValueChanged += (sender, args) => SetMovementDelay(args.GetNewValue<Slider>().Value);
 
 
                 /*Load the menu*/
@@ -504,10 +600,14 @@ namespace HeavenStrikeReksaj
                 _config.AddItem(
                     new MenuItem("Orbwalk", "Combo").SetShared().SetValue(new KeyBind(32, KeyBindType.Press)));
 
-                _delay = _config.Item("MovementDelay").GetValue<Slider>().Value;
+
+                //_delay = _config.Item("MovementDelay").GetValue<Slider>().Value;
+
+
                 Player = ObjectManager.Player;
                 Game.OnUpdate += GameOnOnGameUpdate;
                 Drawing.OnDraw += DrawingOnOnDraw;
+                Instances.Add(this);
             }
 
             public virtual bool InAutoAttackRange(AttackableUnit target)
@@ -518,6 +618,11 @@ namespace HeavenStrikeReksaj
             private int FarmDelay
             {
                 get { return _config.Item("FarmDelay").GetValue<Slider>().Value; }
+            }
+
+            public static bool MissileCheck
+            {
+                get { return _config.Item("MissileCheck").GetValue<bool>(); }
             }
 
             public OrbwalkingMode ActiveMode
@@ -586,7 +691,7 @@ namespace HeavenStrikeReksaj
                 _orbwalkingPoint = point;
             }
 
-            private bool ShouldWait()
+            public bool ShouldWait()
             {
                 return
                     ObjectManager.Get<Obj_AI_Minion>()
@@ -602,7 +707,6 @@ namespace HeavenStrikeReksaj
             public virtual AttackableUnit GetTarget()
             {
                 AttackableUnit result = null;
-
                 if ((ActiveMode == OrbwalkingMode.Mixed || ActiveMode == OrbwalkingMode.LaneClear) &&
                     !_config.Item("PriorizeFarm").GetValue<bool>())
                 {
@@ -617,15 +721,16 @@ namespace HeavenStrikeReksaj
                 if (ActiveMode == OrbwalkingMode.LaneClear || ActiveMode == OrbwalkingMode.Mixed ||
                     ActiveMode == OrbwalkingMode.LastHit)
                 {
-                    foreach (var minion in
+                    var MinionList =
                         ObjectManager.Get<Obj_AI_Minion>()
                             .Where(
                                 minion =>
                                     minion.IsValidTarget() && InAutoAttackRange(minion) &&
                                     minion.Health <
                                     2 *
-                                    (ObjectManager.Player.BaseAttackDamage + ObjectManager.Player.FlatPhysicalDamageMod))
-                        )
+                                    (ObjectManager.Player.BaseAttackDamage + ObjectManager.Player.FlatPhysicalDamageMod));
+
+                    foreach (var minion in MinionList)
                     {
                         var t = (int)(Player.AttackCastDelay * 1000) - 100 + Game.Ping / 2 +
                                 1000 * (int)Player.Distance(minion) / (int)GetMyProjectileSpeed();
@@ -694,7 +799,7 @@ namespace HeavenStrikeReksaj
                         ObjectManager.Get<Obj_AI_Minion>()
                             .Where(
                                 mob =>
-                                    mob.IsValidTarget() && InAutoAttackRange(mob) && mob.Team == GameObjectTeam.Neutral)
+                                    mob.IsValidTarget() && mob.Team == GameObjectTeam.Neutral && InAutoAttackRange(mob) && mob.CharData.BaseSkinName != "gangplankbarrel")
                             .MaxOrDefault(mob => mob.MaxHealth);
                     if (result != null)
                     {
@@ -720,7 +825,7 @@ namespace HeavenStrikeReksaj
 
                         result = (from minion in
                                       ObjectManager.Get<Obj_AI_Minion>()
-                                          .Where(minion => minion.IsValidTarget() && InAutoAttackRange(minion))
+                                          .Where(minion => minion.IsValidTarget() && InAutoAttackRange(minion) && minion.CharData.BaseSkinName != "gangplankbarrel")
                                   let predHealth =
                                       HealthPrediction.LaneClearHealthPrediction(
                                           minion, (int)((Player.AttackDelay * 1000) * LaneClearWaitTimeMod), FarmDelay)
@@ -741,6 +846,8 @@ namespace HeavenStrikeReksaj
 
             private void GameOnOnGameUpdate(EventArgs args)
             {
+                if (!Orbwalker.Enabled)
+                    return;
                 try
                 {
                     if (ActiveMode == OrbwalkingMode.None)
@@ -758,7 +865,7 @@ namespace HeavenStrikeReksaj
                     Orbwalk(
                         target, (_orbwalkingPoint.To2D().IsValid()) ? _orbwalkingPoint : Game.CursorPos,
                         _config.Item("ExtraWindup").GetValue<Slider>().Value,
-                        _config.Item("HoldPosRadius").GetValue<Slider>().Value);
+                        _config.Item("HoldPosRadius").GetValue<Slider>().Value, false, false);
                 }
                 catch (Exception e)
                 {
@@ -768,6 +875,8 @@ namespace HeavenStrikeReksaj
 
             private void DrawingOnOnDraw(EventArgs args)
             {
+                if (!Orbwalker.Enabled)
+                    return;
                 if (_config.Item("AACircle").GetValue<Circle>().Active)
                 {
                     Render.Circle.DrawCircle(
@@ -792,6 +901,7 @@ namespace HeavenStrikeReksaj
                         Player.Position, _config.Item("HoldPosRadius").GetValue<Slider>().Value,
                         _config.Item("HoldZone").GetValue<Circle>().Color);
                 }
+
             }
         }
     }
